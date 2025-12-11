@@ -49,7 +49,6 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
       });
     }
 
-    // Insert student into Supabase
     const { data: student, error: insertErr } = await supabase
       .from('students')
       .insert([{ name, username, email, matric_number }])
@@ -131,5 +130,6 @@ app.post('/api/attendance', async (req, res) => {
   }
 });
 
+// ---------- LISTEN ON PORT ----------
 const PORT = process.env.PORT || 9999;
 app.listen(PORT, () => console.log(`Backend running on ${PORT}`));

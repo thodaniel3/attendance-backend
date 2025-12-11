@@ -2,9 +2,9 @@
   "name": "attendance-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.mjs",
+  "main": "index.js",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.30.0",
