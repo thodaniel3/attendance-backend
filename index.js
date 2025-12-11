@@ -31,7 +31,7 @@ async function getFileUrl(bucket, path) {
   return data?.publicUrl || null;
 }
 
-// ---------- JSON PARSER for other endpoints ----------
+// ---------- JSON PARSER ----------
 app.use(express.json());
 
 // ---------- HEALTH CHECK ----------
@@ -40,12 +40,6 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 // ---------- REGISTER STUDENT ----------
 app.post('/api/student', upload.single('photo'), async (req, res) => {
   try {
-    // ===== DEBUG LOGS =====
-    console.log('=== Registration Attempt ===');
-    console.log('Headers:', req.headers);
-    console.log('Body:', req.body);
-    console.log('File:', req.file);
-
     const { name, username, email, matric_number } = req.body;
 
     if (!name || !username || !email || !matric_number) {
@@ -97,7 +91,18 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
   }
 });
 
-// ---------- GET STUDENT ----------
+// ---------- GET ALL STUDENTS ----------
+app.get('/api/student', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('students').select('*');
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    res.json({ ok: true, students: data });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ---------- GET STUDENT BY ID ----------
 app.get('/api/student/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('students').select('*').eq('id', req.params.id).single();
