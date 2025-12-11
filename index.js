@@ -49,6 +49,7 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
       });
     }
 
+    // Insert student into Supabase
     const { data: student, error: insertErr } = await supabase
       .from('students')
       .insert([{ name, username, email, matric_number }])
@@ -67,7 +68,7 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
       if (!uploadErr) photo_url = await getFileUrl(PHOTO_BUCKET, photoPath);
     }
 
-    // Generate QR
+    // Generate QR code
     const qrPayload = JSON.stringify({ id: student.id });
     const qrBuffer = await QRCode.toBuffer(qrPayload);
     const qrPath = `qr_${student.id}.png`;
@@ -131,5 +132,5 @@ app.post('/api/attendance', async (req, res) => {
 });
 
 // ---------- LISTEN ON PORT ----------
-const PORT = process.env.PORT || 9999;
-app.listen(PORT, () => console.log(`Backend running on ${PORT}`));
+const PORT = process.env.PORT || 5000; // <-- Will use Render's PORT or 5000 locally
+app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
