@@ -6,7 +6,7 @@ import QRCode from 'qrcode';
 import multer from 'multer';
 
 const app = express();
-app.use(cors({ origin: '*' })); // allow all origins for testing
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -116,12 +116,12 @@ app.post('/api/attendance', async (req, res) => {
     // Get today's date in YYYY-MM-DD format
     const today = new Date().toISOString().slice(0, 10);
 
-    // Check if student already marked today
+    // Check if attendance already exists today for this student
     const { data: existing, error: checkErr } = await supabase
       .from('attendance')
       .select('*')
       .eq('student_id', student_id)
-      .gte('created_at', today) // Supabase timestamp column `created_at`
+      .gte('created_at', today) // compare timestamps from today 00:00
       .limit(1);
 
     if (checkErr) return res.status(500).json({ ok: false, error: checkErr.message });
@@ -162,7 +162,7 @@ app.get('/api/attendance/mark', async (req, res) => {
       `);
     }
 
-    // Check if already marked today
+    // Once-per-day check
     const today = new Date().toISOString().slice(0, 10);
     const { data: existing, error: checkErr } = await supabase
       .from('attendance')
@@ -170,6 +170,7 @@ app.get('/api/attendance/mark', async (req, res) => {
       .eq('student_id', student_id)
       .gte('created_at', today)
       .limit(1);
+
     if (checkErr) return res.status(500).send('Error checking attendance');
     if (existing.length > 0) return res.send('<h2>Attendance already taken today</h2>');
 
