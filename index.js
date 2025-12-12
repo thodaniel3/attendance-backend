@@ -26,7 +26,6 @@ if (!FRONTEND_URL) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
 const PHOTO_BUCKET = 'student-photos';
 const QR_BUCKET = 'qr-codes';
 
@@ -58,7 +57,7 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
       .single();
     if (insertErr) return res.status(500).json({ ok: false, error: insertErr.message });
 
-    // Upload photo if provided
+    // Upload student photo
     let photo_url = null;
     if (req.file?.buffer) {
       const photoPath = `photo_${student.id}.png`;
@@ -67,7 +66,7 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
       if (!uploadErr) photo_url = await getFileUrl(PHOTO_BUCKET, photoPath);
     }
 
-    // Build scan URL for QR code
+    // Generate QR code pointing to scan page
     const scanUrl = `${FRONTEND_URL}/scan?id=${encodeURIComponent(student.id)}`;
     const qrBuffer = await QRCode.toBuffer(scanUrl, { type: 'png', errorCorrectionLevel: 'H' });
 
@@ -79,7 +78,7 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
 
     const qr_code_url = await getFileUrl(QR_BUCKET, qrPath);
 
-    // Update student with URLs
+    // Update student record with photo and QR URLs
     await supabase.from('students').update({ photo_url, qr_code_url }).eq('id', student.id);
 
     return res.json({ ok: true, student: { ...student, photo_url, qr_code_url, scanUrl } });
@@ -113,21 +112,20 @@ app.post('/api/attendance', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'Forbidden: invalid admin pin' });
     }
 
-    // Get today's date in YYYY-MM-DD format
     const today = new Date().toISOString().slice(0, 10);
 
-    // Check if attendance already exists today for this student
+    // Check if attendance already exists today
     const { data: existing, error: checkErr } = await supabase
       .from('attendance')
       .select('*')
       .eq('student_id', student_id)
-      .gte('created_at', today) // compare timestamps from today 00:00
+      .gte('created_at', today)
       .limit(1);
 
     if (checkErr) return res.status(500).json({ ok: false, error: checkErr.message });
     if (existing.length > 0) return res.json({ ok: false, error: 'Attendance already taken today' });
 
-    // Insert new attendance
+    // Insert attendance
     const { data, error: insertErr } = await supabase
       .from('attendance')
       .insert([{ student_id, lecturer, course }])
@@ -143,13 +141,13 @@ app.post('/api/attendance', async (req, res) => {
 });
 
 // ------------------------------
-// External attendance mark (via URL)
+// External attendance marking (for third-party QR scanner)
 app.get('/api/attendance/mark', async (req, res) => {
   try {
     const student_id = req.query.student_id;
     const pin = req.query.pin;
-    if (!student_id) return res.status(400).send('<p>Missing student_id in query</p>');
 
+    if (!student_id) return res.status(400).send('<p>Missing student_id in query</p>');
     if (!pin || pin !== ADMIN_PIN) {
       return res.send(`
         <h3>Confirm attendance</h3>
@@ -162,8 +160,8 @@ app.get('/api/attendance/mark', async (req, res) => {
       `);
     }
 
-    // Once-per-day check
     const today = new Date().toISOString().slice(0, 10);
+
     const { data: existing, error: checkErr } = await supabase
       .from('attendance')
       .select('*')
@@ -179,6 +177,7 @@ app.get('/api/attendance/mark', async (req, res) => {
       .insert([{ student_id, lecturer: 'external-scanner', course: 'Unknown' }])
       .select()
       .single();
+
     if (insertErr) return res.status(500).send('Failed to record attendance');
 
     return res.send(`
