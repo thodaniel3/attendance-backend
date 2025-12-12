@@ -1,3 +1,4 @@
+// index.js
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -6,23 +7,22 @@ import QRCode from 'qrcode';
 import multer from 'multer';
 
 const app = express();
-app.use(cors({ origin: '*' }));
+app.use(cors({ origin: '*' })); // allow all origins while testing; restrict later if needed
+app.use(express.json());
 
-// ---------- MULTER SETUP ----------
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ---------- SUPABASE SETUP ----------
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const FRONTEND_URL = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
 const ADMIN_PIN = process.env.ADMIN_PIN;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error("Missing SUPABASE_URL or SUPABASE_KEY");
+  console.error('Missing SUPABASE_URL or SUPABASE_KEY');
   process.exit(1);
 }
 if (!FRONTEND_URL) {
-  console.error("Missing FRONTEND_URL");
+  console.error('Missing FRONTEND_URL');
   process.exit(1);
 }
 
@@ -31,28 +31,24 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const PHOTO_BUCKET = 'student-photos';
 const QR_BUCKET = 'qr-codes';
 
-// ---------- HELPERS ----------
+// helper to get public url (supabase returns { data: { publicUrl } })
 async function getFileUrl(bucket, path) {
   const { data } = supabase.storage.from(bucket).getPublicUrl(path);
   return data?.publicUrl || null;
 }
 
-// ---------- JSON PARSER ----------
-app.use(express.json());
-
-// ---------- HEALTH CHECK ----------
+// HEALTH
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
-// ---------- REGISTER STUDENT ----------
+// REGISTER STUDENT
 app.post('/api/student', upload.single('photo'), async (req, res) => {
   try {
     const { name, username, email, matric_number } = req.body;
-
     if (!name || !username || !email || !matric_number) {
       return res.status(400).json({ ok: false, error: 'Missing required fields' });
     }
 
-    // Insert student into Supabase
+    // Insert student
     const { data: student, error: insertErr } = await supabase
       .from('students')
       .insert([{ name, username, email, matric_number }])
@@ -61,7 +57,7 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
 
     if (insertErr) return res.status(500).json({ ok: false, error: insertErr.message });
 
-    // Upload photo
+    // upload photo if provided
     let photo_url = null;
     if (req.file && req.file.buffer) {
       const photoPath = `photo_${student.id}.png`;
@@ -71,79 +67,115 @@ app.post('/api/student', upload.single('photo'), async (req, res) => {
       if (!uploadErr) photo_url = await getFileUrl(PHOTO_BUCKET, photoPath);
     }
 
-    // Generate QR code containing **full URL** to frontend scan page
+    // Build a scan URL that lecturers (external scanners) will open
+    // Example: https://attendance-app-rho-rose.vercel.app/scan?id=<student.id>
     const scanUrl = `${FRONTEND_URL}/scan?id=${encodeURIComponent(student.id)}`;
+
+    // Generate QR buffer containing the *full* scanUrl
     const qrBuffer = await QRCode.toBuffer(scanUrl, { type: 'png', errorCorrectionLevel: 'H' });
 
-    // Upload QR buffer to Supabase storage
     const qrPath = `qr_${student.id}.png`;
-    const { error: qrUploadErr } = await supabase.storage.from(QR_BUCKET)
+    const { error: qrUploadErr } = await supabase.storage
+      .from(QR_BUCKET)
       .upload(qrPath, qrBuffer, { contentType: 'image/png', upsert: true });
 
     if (qrUploadErr) {
-      console.error('QR upload error:', qrUploadErr.message);
+      console.error('QR upload error:', qrUploadErr.message || qrUploadErr);
       return res.status(500).json({ ok: false, error: 'Failed to upload QR code' });
     }
 
-    // Get public URL of QR code
     const qr_code_url = await getFileUrl(QR_BUCKET, qrPath);
 
-    // Update student with URLs
-    await supabase.from('students')
-      .update({ photo_url, qr_code_url })
-      .eq('id', student.id);
+    // update student with urls
+    await supabase.from('students').update({ photo_url, qr_code_url }).eq('id', student.id);
 
-    res.json({
-      ok: true,
-      student: { ...student, photo_url, qr_code_url, scanUrl }
-    });
-
+    return res.json({ ok: true, student: { ...student, photo_url, qr_code_url, scanUrl } });
   } catch (err) {
     console.error('Registration error:', err);
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ ok: false, error: err.message || String(err) });
   }
 });
 
-// ---------- GET STUDENT BY ID ----------
+// GET STUDENT BY ID
 app.get('/api/student/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('students')
-      .select('*')
-      .eq('id', req.params.id)
-      .single();
-
+    const { data, error } = await supabase.from('students').select('*').eq('id', req.params.id).single();
     if (error) return res.status(404).json({ ok: false, error: 'Student not found' });
-    res.json({ ok: true, student: data });
+    return res.json({ ok: true, student: data });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ---------- ATTENDANCE ----------
+// POST ATTENDANCE (used by in-app scanner and frontend)
 app.post('/api/attendance', async (req, res) => {
   try {
-    const { student_id, lecturer = "Unknown", course = "Unknown", admin_pin } = req.body;
+    const { student_id, lecturer = 'Unknown', course = 'Unknown', admin_pin } = req.body;
+    if (!student_id) return res.status(400).json({ ok: false, error: 'Missing student_id' });
 
-    if (!student_id) return res.status(400).json({ ok: false, error: "Missing student_id" });
-
-    // Validate admin pin
     if (!ADMIN_PIN || !admin_pin || admin_pin !== ADMIN_PIN) {
-      return res.status(403).json({ ok: false, error: "Forbidden: invalid admin pin" });
+      return res.status(403).json({ ok: false, error: 'Forbidden: invalid admin pin' });
     }
 
-    const { data, error } = await supabase.from('attendance')
+    // Insert attendance
+    const { data, error } = await supabase
+      .from('attendance')
       .insert([{ student_id, lecturer, course }])
       .select()
       .single();
 
     if (error) return res.status(500).json({ ok: false, error: error.message });
-    res.json({ ok: true, attendance: data });
-
+    return res.json({ ok: true, attendance: data });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    console.error(err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
-// ---------- LISTEN ----------
+// GET ATTENDANCE MARK (convenience for external scanners that include PIN in URL)
+// Example: https://<backend>/api/attendance/mark?student_id=...&pin=1234
+// If pin missing or wrong, returns a small HTML form to enter pin.
+app.get('/api/attendance/mark', async (req, res) => {
+  try {
+    const student_id = req.query.student_id;
+    const pin = req.query.pin;
+
+    if (!student_id) return res.status(400).send('<p>Missing student_id in query</p>');
+
+    if (!pin || pin !== ADMIN_PIN) {
+      // return simple HTML form that will resubmit to same endpoint
+      return res.send(`
+        <h3>Confirm attendance</h3>
+        <p>Student ID: <strong>${student_id}</strong></p>
+        <form method="GET" action="/api/attendance/mark">
+          <input type="hidden" name="student_id" value="${student_id}" />
+          PIN: <input name="pin" type="password" />
+          <button type="submit">Submit</button>
+        </form>
+      `);
+    }
+
+    // Insert attendance
+    const { data, error } = await supabase
+      .from('attendance')
+      .insert([{ student_id, lecturer: 'external-scanner', course: 'Unknown' }])
+      .select()
+      .single();
+
+    if (error) return res.status(500).send('Failed to record attendance');
+
+    // friendly HTML response
+    return res.send(`
+      <h2>Attendance recorded</h2>
+      <p>Student ID: ${student_id}</p>
+      <p>Time: ${new Date().toLocaleString()}</p>
+    `);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).send('Server error');
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
